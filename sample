@@ -1,0 +1,202 @@
+import JnxMainNetAbi from "./abi/JnxMainNetAbi";
+import Web3 from 'web3';
+
+class JanexTransfer {
+
+	ABI;
+	contractAddress;
+	provider;
+	janexRate;
+	contract;
+
+	#jnxWalletPrivateKey;
+	jnxWalletAddress;
+
+	web3;
+
+	constructor(janexRate, privateKey) {
+		this.ABI = JnxMainNetAbi;
+		this.contractAddress = process.env.REACT_APP_JNX_CONTRACT_ADDRESS;
+		this.provider = process.env.REACT_APP_WEB3_PROVIDER;
+		this.janexRate = janexRate;
+
+		this.#jnxWalletPrivateKey = privateKey;
+		this.jnxWalletAddress = process.env.REACT_APP_JNX_WALLET_ADDRESS;
+	}
+
+	run() {
+		this.web3 = new Web3(new Web3.providers.HttpProvider(this.provider));
+		this.contract = new this.web3.eth.Contract(this.ABI, this.contractAddress);
+	}
+
+	async releaseJanex(userData) {
+		let sendSignedTransactionHash = null;
+		let sendSignedTransactionErrorMessage = null;
+
+		let signedTx = null;
+		let errorMessage = null;
+
+		const toWalletAddress = userData.acc_number;
+
+		const fromWalletAddress = this.jnxWalletAddress;
+
+
+		let _amount = parseInt(userData.request_amount) / this.janexRate;
+		//_amount = _amount.toString();
+        // _amount = parseInt(_amount * 1000);
+        // _amount = parseFloat(_amount / 1000);
+		_amount = _amount.toString();
+
+		console.log("amount",_amount);
+
+		const amount = this.web3.utils.toHex(this.web3.utils.toWei(_amount));
+		console.log(amount);
+
+		const data = this.contract.methods.transfer(toWalletAddress, amount).encodeABI();
+		// const balance = await this.contract.methods.balanceOf(fromWalletAddress).call();
+		console.log(data);
+		const tx = this.buildInitialTransaction(fromWalletAddress, this.contractAddress, data); // CHANGED - CHECK
+		console.log("tx:====",tx);
+		var txWithGas;
+		try{
+			 txWithGas = await this.estimateGasForInitialTransaction(tx, this.web3);
+			if (!txWithGas) {
+				console.log('Something wrong! Please check with IT Team.');
+			}
+		}catch(e){
+			console.log('txtwithgas',e)
+		}
+		
+
+		//console.log(txWithGas, 'txWithGas');
+
+		
+
+		// const signedTx = await this.signTransaction(txWithGas, this.web3, this.#jnxWalletPrivateKey);
+
+		try {
+			await this.web3.eth.accounts.signTransaction(txWithGas, this.#jnxWalletPrivateKey)
+				.then((result) => {
+					console.log(result);
+					signedTx = result;
+				})
+				.catch((error) => {
+					errorMessage = error.message;
+					console.log(errorMessage, 'error in signTransaction promise');
+				});
+
+			if (!signedTx) {
+				return {
+					stop: true,
+					success: false,
+					message: errorMessage,
+					type: "signTransaction"
+				};
+			}
+		} catch (error) {
+			console.log(error.message, 'error in signTransaction try catch')
+
+			return {
+				stop: true,
+				success: false,
+				message: error.message,
+				type: "signTransaction - try catch"
+			};
+		}
+
+		try {
+			await this.web3.eth.sendSignedTransaction(signedTx.rawTransaction, (error, hash) => {
+				if (error) {
+					console.log(`failed with error: ${error.message}`, 'error in sendSignedTransaction callback');
+
+					sendSignedTransactionErrorMessage = error.message;
+				}
+
+				if (hash) {
+					console.log(hash, 'hash');
+					console.log(`${_amount} JNX transfer to ${toWalletAddress} successfull with hash`);
+
+					sendSignedTransactionHash = hash;
+				}
+			});
+		} catch (error) {
+			console.log(error.message, 'error in sendSignedTransaction try catch')
+
+			return {
+				stop: true,
+				success: false,
+				message: error.message,
+				type: "sendSignedTransaction - try catch"
+			};
+		}
+
+		if (sendSignedTransactionHash) {
+			return {
+				stop: false,
+				success: true,
+				message: `${_amount} JNX transfer to ${toWalletAddress} successfull with hash ${sendSignedTransactionHash}`,
+				hash: sendSignedTransactionHash
+			};
+		}
+
+		if (sendSignedTransactionErrorMessage) {
+			return {
+				stop: true,
+				success: false,
+				message: sendSignedTransactionErrorMessage,
+				type: "sendSignedTransaction - try catch"
+			};
+		}
+
+	}
+
+	buildInitialTransaction(from, to, data = null) {
+		var tx = {
+			from: from,
+			to: to,
+			value: "0x00",
+			data: data
+		}
+		return tx;
+	}
+
+	async estimateGasForInitialTransaction(tx, web3) {
+		var gas;
+		try{
+			 gas = await web3.eth.estimateGas(tx);
+			 console.log("gas:====",gas);
+		}catch(e){
+			gas = 60000;
+			console.log("gas| error", e)
+		}
+
+		// await web3.eth.estimateGas( tx, 
+		//   function(e, d) {
+		// 	var gas = web3.eth.toBigNumber(gas).toString();
+		// 	console.log("gas:---",gas);
+		
+		// 	if (gas.toString() != "null") {
+		// 	  gas = d; 
+		// 	  console.log("Gas: " + d);
+		// 	}
+		//  });
+		
+		console.log("gas:==",gas);
+		var txWithGas = {
+			from: tx.from,
+			to: tx.to,
+			value: tx.value,
+			data: tx.data,
+			gas: gas
+		}
+
+		return txWithGas;
+	}
+
+	// async signTransaction(tx, web3, privateKey) {
+	// 	var signedTx = await web3.eth.accounts.signTransaction(tx, privateKey)
+
+	// 	return signedTx;
+	// }
+}
+export default JanexTransfer;
